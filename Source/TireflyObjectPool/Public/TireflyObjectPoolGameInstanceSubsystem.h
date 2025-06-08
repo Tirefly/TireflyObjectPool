@@ -4,9 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "StructUtils/InstancedStruct.h"
 #include "TireflyObjectPoolGameInstanceSubsystem.generated.h"
 
 
+
+// Object对象池
 USTRUCT()
 struct FTireflyObjectPool
 {
@@ -18,8 +21,8 @@ public:
 };
 
 
-/** 全局Object对象池子系统 */
-/** Global object pool subsystem */
+
+// Object对象池游戏实例子系统，所有基于该子系统生成的Object实例的Outer都会被默认设置为该子系统实例
 UCLASS()
 class TIREFLYOBJECTPOOL_API UTireflyObjectPoolGameInstanceSubsystem : public UGameInstanceSubsystem
 {
@@ -32,26 +35,26 @@ public:
 	
 	virtual void Deinitialize() override;
 
+private:
+	// 对象池操作的线程安全锁
+	FCriticalSection PoolLock;
+
 #pragma endregion
 
 
 #pragma region ObjectPool_Getter
 
 protected:
-	UObject* GetObject_Internal(const TSubclassOf<UObject>& ObjectClass, FName ObjectID);
+	UObject* FetchObjectFromPool(const TSubclassOf<UObject>& ObjectClass, FName ObjectId);
+	
+	UObject* GetObjectFromPool_Internal(
+		const TSubclassOf<UObject>& ObjectClass,
+		FName ObjectId,
+		const FInstancedStruct* PropertyData = nullptr);
 
 public:
 	template<typename T>
-	T* GetObject(TSubclassOf<T> ObjectClass, FName ObjectID = NAME_None);
-
-	template<typename T>
-	TArray<T*> GetObjects(TSubclassOf<T> ObjectClass, FName ObjectID = NAME_None, int32 Count = 16);
-
-	UFUNCTION(BlueprintCallable, Category = "Object Pool", Meta = (DeterminesOutputType = "ObjectClass", DisplayName = "Object Pool - Get Object"))
-	UObject* K2_GetObject(const TSubclassOf<UObject>& ObjectClass, FName ObjectID);
-
-	UFUNCTION(BlueprintCallable, Category = "Object Pool", Meta = (DeterminesOutputType = "ObjectClass", DisplayName = "Object Pool - Get Objects"))
-	TArray<UObject*> K2_GetObjects(const TSubclassOf<UObject>& ObjectClass, FName ObjectID, int32 Count = 16);
+	T* GetObjectFromPool(TSubclassOf<T> ObjectClass, FName ObjectId = NAME_None, const FInstancedStruct* PropertyData = nullptr);
 
 #pragma endregion
 
@@ -59,8 +62,9 @@ public:
 #pragma region ObjectPool_Recycle
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	void ReturnObject(UObject* Object);
+	// 回收Object实例到对象池中
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	void RecycleObjectToPool(UObject* Object);
 
 #pragma endregion
 
@@ -68,8 +72,18 @@ public:
 #pragma region ObjectPool_WarmUp
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	void WarmUpObjects(TSubclassOf<UObject> ObjectClass, FName ObjectID, int32 Count);
+	/**
+	 * 预热特定类型（或特定Id）的对象池，生成指定数量的Object实例并使其在池中待命
+	 * 
+	 * @param ObjectClass 对象池的目标类型
+	 * @param ObjectId 对象的目标Id
+	 * @param Count 
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	void WarmUpObjectPool(
+		TSubclassOf<UObject> ObjectClass,
+		FName ObjectId,
+		int32 Count = 16);
 
 #pragma endregion
 
@@ -77,14 +91,17 @@ public:
 #pragma region ObjectPool_Clear
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
+	// 清空所有对象池
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	void ClearAllObjectPools();
+	
+	// 清空指定类型的对象池
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
 	void ClearObjectPoolByClass(const TSubclassOf<UObject>& ObjectClass);
 
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	void ClearObjectPoolByID(FName ObjectID);
-
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	void ClearAllObjectPools();
+	// 清空指定Id的对象池
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	void ClearObjectPoolById(FName ObjectId);
 
 #pragma endregion
 
@@ -92,17 +109,21 @@ public:
 #pragma region ObjectPool_Debug
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	TArray<TSubclassOf<UObject>> DebugObjectClasses() const;
+	// 获取在Object类对象池中所有的Object类型
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	TArray<TSubclassOf<UObject>> Debug_GetAllObjectPoolClasses() const;
 
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	TArray<FName> DebugObjectIDs() const;
+	// 获取在ObjectId对象池中所有的ObjectId
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	TArray<FName> DebugGetObjectPoolIds() const;
 
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	int32 DebugObjectNumberOfClass(const TSubclassOf<UObject>& ObjectClass) const;
+	// 获取特定类型的对象池中剩余Object的数量，如果不存在指定类型的对象池或者池中没有Object实例，则返回-1
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	int32 DebugObjectNumberOfClassPool(const TSubclassOf<UObject>& ObjectClass) const;
 
-	UFUNCTION(BlueprintCallable, Category = "Object Pool")
-	int32 DebugObjectNumberOfID(FName ObjectID) const;
+	// 获取特定Id的对象池中剩余Object的数量，如果不存在指定类型的对象池或者池中没有Object实例，则返回-1
+	UFUNCTION(BlueprintCallable, Category = "Tirefly Object Pool")
+	int32 DebugObjectNumberOfIdPool(FName ObjectId) const;
 
 #pragma endregion
 
@@ -114,7 +135,7 @@ private:
 	TMap<TSubclassOf<UObject>, FTireflyObjectPool> ObjectPoolOfClass;
 
 	UPROPERTY()
-	TMap<FName, FTireflyObjectPool> ObjectPoolOfID;
+	TMap<FName, FTireflyObjectPool> ObjectPoolOfId;
 
 #pragma endregion
 };
@@ -123,21 +144,12 @@ private:
 #pragma region ObjectPool_FuncitonTemplate
 
 template <typename T>
-T* UTireflyObjectPoolGameInstanceSubsystem::GetObject(TSubclassOf<T> ObjectClass, FName ObjectID)
+T* UTireflyObjectPoolGameInstanceSubsystem::GetObjectFromPool(
+	TSubclassOf<T> ObjectClass,
+	FName ObjectId,
+	const FInstancedStruct* PropertyData)
 {
-	return Cast<T>(GetObject_Internal(ObjectClass, ObjectID));
-}
-
-template <typename T>
-TArray<T*> UTireflyObjectPoolGameInstanceSubsystem::GetObjects(TSubclassOf<T> ObjectClass, FName ObjectID, int32 Count)
-{
-	TArray<T*> Objects;
-	for (int32 i = 0; i < Count; ++i)
-	{
-		Objects.Add(Cast<T>(GetObject_Internal(ObjectClass, ObjectID)));
-	}
-
-	return Objects;
+	return Cast<T>(GetObjectFromPool_Internal(ObjectClass, ObjectId, PropertyData));
 }
 
 #pragma endregion

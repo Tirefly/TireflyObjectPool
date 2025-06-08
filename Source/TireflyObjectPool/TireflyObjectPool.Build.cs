@@ -38,6 +38,7 @@ public class TireflyObjectPool : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"StructUtils"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
